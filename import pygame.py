@@ -1,5 +1,10 @@
-
-
+"""
+Define
+In/Args
+Out/Returns
+Purpose
+Last modify,When
+"""
 import pygame
 import sys
 import math
@@ -34,23 +39,35 @@ class Bullet:
         self.exact_y = 0.0
         self.dx = 0.0
         self.dy = -self.speed
+        self.homing = False
+        self.damage = 15
 
-    def fire(self, x, y):
+    def fire(self, x, y, dx=0.0, dy=None, homing=False, damage=15):
         """bắn bullet từ x y"""
+        if dy is None:
+            dy = -self.speed
+
         # bật đạn 
         self.active = True
         self.rect.centerx = x
         self.rect.bottom = y
         self.exact_x = float(x)
         self.exact_y = float(y)
-        self.dx = 0.0
-        self.dy = -self.speed
+        self.dx = dx
+        self.dy = dy
+        self.homing = homing
+        self.damage = damage
 
     def update(self, target=None):
         """cập nhật bullet và tự nhắm khi có target"""
         if self.active:
             # có boss thì bẻ hướng nhẹ
-            if target and target.active:
+            if self.homing and target and target.active:
+                # khi đạn đã vượt qua boss thì ngừng tự nhắm để tránh vòng lại quanh boss
+                if self.exact_y <= target.rect.top:
+                    self.homing = False
+                
+            if self.homing and target and target.active:
                 dir_x = target.rect.centerx - self.exact_x
                 dir_y = target.rect.centery - self.exact_y
                 dist = math.hypot(dir_x, dir_y)
@@ -83,7 +100,9 @@ class Bullet:
     def draw(self, surface):
         """vẽ đạn"""
         if self.active:
-            pygame.draw.rect(surface, RED, self.rect)
+            bullet_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(bullet_surface, (255, 0, 0, 120), bullet_surface.get_rect())
+            surface.blit(bullet_surface, self.rect.topleft)
 
 class BulletPool:
     def __init__(self, size):
@@ -92,12 +111,12 @@ class BulletPool:
         self.pool = deque([Bullet() for _ in range(size)])
         self.active_bullets = [] # đạn đang bay
 
-    def get_bullet(self, x, y):
+    def get_bullet(self, x, y, dx=0.0, dy=None, homing=False, damage=15):
         """lấy đạn từ pool"""
         if self.pool:
             # còn đạn rảnh thì lấy ra dùng
             bullet = self.pool.popleft()
-            bullet.fire(x, y)
+            bullet.fire(x, y, dx, dy, homing, damage)
             self.active_bullets.append(bullet)
 
     def update_and_draw(self, surface, target=None):
@@ -112,6 +131,13 @@ class BulletPool:
                 self.active_bullets.remove(bullet)
                 self.pool.append(bullet)
 
+    def clear(self):
+        """xóa toàn bộ đạn đang bay"""
+        for bullet in self.active_bullets:
+            bullet.active = False
+            self.pool.append(bullet)
+        self.active_bullets.clear()
+
 class EnemyBullet:
     def __init__(self):
         """đạn của boss"""
@@ -122,11 +148,13 @@ class EnemyBullet:
         self.exact_x = 0.0
         self.exact_y = 0.0
         self.bounces_left = 0
+        self.damage = 1
 
-    def fire(self, x, y, dx, dy, bounces=0):
+    def fire(self, x, y, dx, dy, bounces=0, size=10, damage=1):
         """bắn đạn boss """
         # lưu vận tốc để update mỗi frame
         self.active = True
+        self.rect.size = (size, size)
         self.exact_x = float(x)
         self.exact_y = float(y)
         self.rect.centerx = x
@@ -134,6 +162,7 @@ class EnemyBullet:
         self.speed_x = dx
         self.speed_y = dy
         self.bounces_left = bounces
+        self.damage = damage
 
     def update(self):
         """cập nhật đạn boss và nảy tường"""
@@ -159,6 +188,10 @@ class EnemyBullet:
                     self.speed_y = abs(self.speed_y)
                     self.exact_y = self.rect.height / 2
                     bounced = True
+                elif self.rect.bottom >= HEIGHT:
+                    self.speed_y = -abs(self.speed_y)
+                    self.exact_y = HEIGHT - self.rect.height / 2
+                    bounced = True
 
                 if bounced:
                     # mỗi lần chạm tường thì trừ một lần nảy
@@ -174,7 +207,7 @@ class EnemyBullet:
         """vẽ enemy bullet"""
         if self.active:
             color = (255, 165, 0) if self.bounces_left > 0 else YELLOW # cam khi còn nảy
-            pygame.draw.circle(surface, color, self.rect.center, 5)
+            pygame.draw.circle(surface, color, self.rect.center, max(self.rect.width, self.rect.height) // 2)
 
 class EnemyBulletPool:
     def __init__(self, size):
@@ -182,12 +215,12 @@ class EnemyBulletPool:
         self.pool = deque([EnemyBullet() for _ in range(size)])
         self.active_bullets = []
 
-    def get_bullet(self, x, y, dx, dy, bounces=0):
+    def get_bullet(self, x, y, dx, dy, bounces=0, size=10, damage=1):
         """lấy đạn boss từ hồ"""
         if self.pool:
             # boss bắn
             bullet = self.pool.popleft()
-            bullet.fire(x, y, dx, dy, bounces)
+            bullet.fire(x, y, dx, dy, bounces, size=size, damage=damage)
             self.active_bullets.append(bullet)
 
     def update_and_draw(self, surface):
@@ -199,6 +232,13 @@ class EnemyBulletPool:
                 # trả lại hồ
                 self.active_bullets.remove(bullet)
                 self.pool.append(bullet)
+
+    def clear(self):
+        """xóa toàn bộ đạn boss đang bay"""
+        for bullet in self.active_bullets:
+            bullet.active = False
+            self.pool.append(bullet)
+        self.active_bullets.clear()
 
 """player và boss"""
 
@@ -251,79 +291,228 @@ class Player:
         else:
             pygame.draw.rect(surface, BLUE, self.rect)
 
-class Boss:
-    def __init__(self):
-        """boss và thông tin máu"""
-        self.rect = pygame.Rect(WIDTH//2 - 40, -100, 80, 80)
-        self.target_y = 100
-        self.speed = 2
+class BaseBoss:
+    def __init__(self, x, y, width, height, health, color, name, target_y=100, speed=2, shoot_delay=200, entry_delay=1000):
+        """boss nền để tạo nhiều kiểu boss khác nhau"""
+        self.rect = pygame.Rect(x, y, width, height)
+        self.target_y = target_y
+        self.speed = speed
         self.ready = False
         self.last_shot_time = 0
-        self.shoot_delay = 200 # thời gian giữa 2 lượt bắn
-        self.max_health = 1000
+        self.shoot_delay = shoot_delay
+        self.max_health = health
         self.health = self.max_health
         self.active = True
-        self.shoot_angle_offset = 0 # góc lệch đạn
+        self.shoot_angle_offset = 0
+        self.color = color
+        self.name = name
+        self.entry_delay = entry_delay
+        self.spawn_time = None
 
     def update(self, current_time, enemy_bullet_pool):
-        """cập nhật boss và gọi bắn"""
+        """cập nhật chuyển động và gọi bắn"""
         if not self.active:
             return
-            
-        # boss đi chuyển vào màng hình
+
+        if self.spawn_time is None:
+            self.spawn_time = current_time
+
+        if current_time - self.spawn_time < self.entry_delay:
+            return
+
         if self.rect.y < self.target_y:
             self.rect.y += self.speed
         else:
             self.ready = True
 
-        # đủ nhịp thì bắn tiếp
         if self.ready and current_time - self.last_shot_time > self.shoot_delay:
             self.shoot(enemy_bullet_pool)
             self.last_shot_time = current_time
 
     def shoot(self, enemy_bullet_pool):
-        """bắn vòng đạn xoay"""
-        # mỗi lượt bắn một vòng đạn
-        num_bullets = random.randint(15, 20)
-        base_speed = random.uniform(3.0, 5.0)
-        
-        # tăng góc lệch để vòng sau khác vòng trước
-        self.shoot_angle_offset += random.uniform(10.0, 25.0) 
+        """ghi đè ở lớp con"""
+        raise NotImplementedError
 
-        for i in range(num_bullets):
-            # chia đều 360 độ cho cả vòng
-            angle_deg = self.shoot_angle_offset + i * (360 / num_bullets)
-            angle = math.radians(angle_deg)
-            
-            speed = base_speed + random.uniform(-1.0, 1.0)
+    def take_damage(self, amount):
+        """giảm máu boss"""
+        if not self.active:
+            return
 
-            dx = math.cos(angle) * speed
-            dy = math.sin(angle) * speed
-            
-            bounces = 0
-            if random.random() < 0.10: # random đạn nảy
-                bounces = random.randint(1, 2)
-
-            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, bounces)
+        self.health -= amount
+        if self.health <= 0:
+            self.health = 0
+            self.active = False
 
     def draw(self, surface):
         """vẽ boss và vòng máu"""
         if not self.active:
             return
-            
-        pygame.draw.rect(surface, GREEN, self.rect)
-        
-        # vẽ vòng máu quanh boss
+
+        pygame.draw.rect(surface, self.color, self.rect)
+
         center = self.rect.center
-        radius = 70
-        pygame.draw.circle(surface, (50, 50, 50), center, radius, 5) # nền vòng máu
-        
+        radius = max(self.rect.width, self.rect.height) // 2 + 20
+        pygame.draw.circle(surface, (50, 50, 50), center, radius, 5)
+
         if self.health > 0:
             health_ratio = self.health / self.max_health
             rect_for_arc = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
-            start_angle = math.pi / 2 # bắt đầu từ phía trên
+            start_angle = math.pi / 2
             end_angle = start_angle + (2 * math.pi * health_ratio)
             pygame.draw.arc(surface, RED, rect_for_arc, start_angle, end_angle, 5)
+
+
+class CircleShotBoss(BaseBoss):
+    def __init__(self):
+        super().__init__(WIDTH // 2 - 40, -100, 80, 80, 1000, GREEN, "Circle Shot Boss", entry_delay=1000)
+
+    def shoot(self, enemy_bullet_pool):
+        """bắn vòng đạn tròn"""
+        num_bullets = random.randint(15, 20)
+        base_speed = random.uniform(3.0, 5.0)
+        self.shoot_angle_offset += random.uniform(10.0, 25.0)
+
+        for i in range(num_bullets):
+            angle_deg = self.shoot_angle_offset + i * (360 / num_bullets)
+            angle = math.radians(angle_deg)
+            speed = base_speed + random.uniform(-1.0, 1.0)
+
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0)
+
+
+class FanBounceBoss(BaseBoss):
+    def __init__(self):
+        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1200, (80, 220, 255), "Fan Bounce Boss", shoot_delay=240, entry_delay=1000)
+
+    def shoot(self, enemy_bullet_pool):
+        """bắn quạt và có đạn nảy"""
+        num_bullets = random.randint(5, 8)
+        spread_deg = random.uniform(40.0, 70.0)
+        base_angle = math.pi / 2
+        base_speed = random.uniform(4.0, 6.0)
+
+        for i in range(num_bullets):
+            if num_bullets == 1:
+                offset = 0.0
+            else:
+                t = i / (num_bullets - 1)
+                offset = math.radians(-spread_deg / 2 + spread_deg * t)
+
+            angle = base_angle + offset
+            speed = base_speed + random.uniform(-0.6, 0.8)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+
+            bounces = 0
+            if random.random() < 0.65:
+                bounces = random.randint(1, 2)
+
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, bounces)
+
+class OrbitCircleBoss(BaseBoss):
+    def __init__(self):
+        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1600, (255, 120, 120), "Orbit Circle Boss", target_y=130, speed=2, shoot_delay=450, entry_delay=1000)
+        self.patrol_speed = 2.5
+        self.patrol_direction = 1
+        self.patrol_ready = False
+        self.left_bound = 60
+        self.right_bound = WIDTH - 60 - self.rect.width
+
+    def update(self, current_time, enemy_bullet_pool):
+        """di chuyển tới giữa rồi đi ngang trái phải"""
+        if not self.active:
+            return
+
+        if self.spawn_time is None:
+            self.spawn_time = current_time
+
+        if current_time - self.spawn_time < self.entry_delay:
+            return
+
+        if not self.patrol_ready:
+            if self.rect.y < self.target_y:
+                self.rect.y += self.speed
+                return
+            self.patrol_ready = True
+            self.rect.y = self.target_y
+
+        self.rect.x += self.patrol_direction * self.patrol_speed
+
+        if self.rect.x <= self.left_bound:
+            self.rect.x = self.left_bound
+            self.patrol_direction = 1
+        elif self.rect.x >= self.right_bound:
+            self.rect.x = self.right_bound
+            self.patrol_direction = -1
+
+        if current_time - self.last_shot_time > self.shoot_delay:
+            self.shoot(enemy_bullet_pool)
+            self.last_shot_time = current_time
+
+    def shoot(self, enemy_bullet_pool):
+        """bắn 8 đạn lớn, chậm, theo hình tròn"""
+        num_bullets = 8
+        base_speed = 1.8
+
+        for i in range(num_bullets):
+            angle_deg = i * (360 / num_bullets)
+            angle = math.radians(angle_deg)
+            speed = base_speed + random.uniform(-0.2, 0.2)
+
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+
+            enemy_bullet_pool.get_bullet(
+                self.rect.centerx,
+                self.rect.centery,
+                dx,
+                dy,
+                0,
+                size=60,
+            )
+
+class BossRush:
+    def __init__(self, bosses):
+        """quản lý danh sách boss theo thứ tự boss rush"""
+        self.bosses = bosses
+        self.current_index = 0
+
+    def current_boss(self):
+        if self.current_index >= len(self.bosses):
+            return None
+        return self.bosses[self.current_index]
+
+    def has_next_boss(self):
+        return self.current_index < len(self.bosses) - 1
+
+    def advance_to_next_boss(self, current_time):
+        if not self.has_next_boss():
+            return
+
+        self.current_index += 1
+        boss = self.current_boss()
+        if boss is not None:
+            boss.spawn_time = current_time
+            boss.ready = False
+            boss.last_shot_time = 0
+
+    def update(self, current_time, enemy_bullet_pool):
+        boss = self.current_boss()
+        if boss is None:
+            return
+
+        boss.update(current_time, enemy_bullet_pool)
+
+    def draw(self, surface):
+        boss = self.current_boss()
+        if boss is not None:
+            boss.draw(surface)
+
+    def is_cleared(self):
+        return self.current_index >= len(self.bosses)
 
 # ==========================================
 # phần 3: game loop
@@ -331,16 +520,58 @@ class Boss:
 def main():
     """vòng lặp chính của game"""
     player = Player()
-    boss = Boss()
+    boss_rush = BossRush([CircleShotBoss(), FanBounceBoss(), OrbitCircleBoss()])
     # pool đạn của player
     bullet_pool = BulletPool(100) 
     # pool đạn của boss
     enemy_bullet_pool = EnemyBulletPool(300)
 
     running = True
-    game_state = "playing" # trạng thái hiện tại
+    game_state = "menu" # trạng thái hiện tại
+    selected_ammo = None
+    fire_mode_choices = []
+    damage_bonus = 0
     last_shot_time = 0
     shoot_delay = 100 # thời gian giữa 2 phát
+
+    ammo_configs = {
+        1: {
+            "name": "Dan thang (damage cao)",
+            "damage": 12,
+            "homing": False,
+            "fan_angles": [0],
+        },
+        2: {
+            "name": "Dan tim duong (damage thap)",
+            "damage": 5,
+            "homing": True,
+            "fan_angles": [0],
+        },
+        3: {
+            "name": "Dan quat (damage trung binh)",
+            "damage": 10,
+            "homing": False,
+            "fan_angles": [-20, 0, 20],
+        },
+    }
+
+    def build_fire_mode_choices(current_ammo):
+        """trả về 2 lựa chọn đổi mode khác với mode hiện tại"""
+        return [ammo_id for ammo_id in (1, 2, 3) if ammo_id != current_ammo]
+
+    def fire_mode_label(ammo_id):
+        return ammo_configs[ammo_id]["name"]
+
+    def draw_boss_position_marker(surface, x_position, y_position):
+        """vẽ tam giác đánh dấu vị trí đứng dưới boss"""
+        triangle_surface = pygame.Surface((28, 28), pygame.SRCALPHA)
+        triangle_points = [
+            (14, 2),
+            (2, 24),
+            (26, 24),
+        ]
+        pygame.draw.polygon(triangle_surface, (255, 255, 0, 90), triangle_points)
+        surface.blit(triangle_surface, (x_position - 14, y_position - 14))
 
     font_large = pygame.font.SysFont(None, 72)
     font_small = pygame.font.SysFont(None, 36)
@@ -352,36 +583,100 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and game_state != "playing":
-                if event.key == pygame.K_r: # bấm r để chơi lại
-                    return main()
-                elif event.key == pygame.K_q: # bấm q để thoát
-                    running = False
+            elif event.type == pygame.KEYDOWN:
+                if game_state == "menu":
+                    if event.key in (pygame.K_1, pygame.K_KP1):
+                        selected_ammo = 1
+                        game_state = "playing"
+                    elif event.key in (pygame.K_2, pygame.K_KP2):
+                        selected_ammo = 2
+                        game_state = "playing"
+                    elif event.key in (pygame.K_3, pygame.K_KP3):
+                        selected_ammo = 3
+                        game_state = "playing"
+                    elif event.key == pygame.K_q:
+                        running = False
+                elif game_state == "upgrade_fire_mode":
+                    if event.key == pygame.K_1:
+                        selected_ammo = fire_mode_choices[0]
+                        boss_rush.advance_to_next_boss(current_time)
+                        enemy_bullet_pool.clear()
+                        bullet_pool.clear()
+                        game_state = "playing"
+                    elif event.key == pygame.K_2:
+                        selected_ammo = fire_mode_choices[1]
+                        boss_rush.advance_to_next_boss(current_time)
+                        enemy_bullet_pool.clear()
+                        bullet_pool.clear()
+                        game_state = "playing"
+                    elif event.key == pygame.K_q:
+                        game_state = "upgrade"
+                elif game_state == "upgrade":
+                    if event.key == pygame.K_1:
+                        player.lives += 1
+                        boss_rush.advance_to_next_boss(current_time)
+                        enemy_bullet_pool.clear()
+                        bullet_pool.clear()
+                        game_state = "playing"
+                    elif event.key == pygame.K_2:
+                        fire_mode_choices = build_fire_mode_choices(selected_ammo)
+                        game_state = "upgrade_fire_mode"
+                    elif event.key == pygame.K_3:
+                        damage_bonus += 3
+                        boss_rush.advance_to_next_boss(current_time)
+                        enemy_bullet_pool.clear()
+                        bullet_pool.clear()
+                        game_state = "playing"
+                    elif event.key == pygame.K_q:
+                        running = False
+                elif game_state != "playing":
+                    if event.key == pygame.K_r: # bấm r để chơi lại
+                        return main()
+                    elif event.key == pygame.K_q: # bấm q để thoát
+                        running = False
 
         if game_state == "playing":
             # cập nhật
             keys = pygame.key.get_pressed()
             player.move(keys)
-            boss.update(current_time, enemy_bullet_pool)
+            boss_rush.update(current_time, enemy_bullet_pool)
             
             # giữ z để  bắn
             if keys[pygame.K_z]:
                 if current_time - last_shot_time > shoot_delay:
+                    ammo = ammo_configs[selected_ammo]
+
                     # nòng súng là mép trên player
-                    bullet_pool.get_bullet(player.rect.centerx, player.rect.top)
+                    for angle_deg in ammo["fan_angles"]:
+                        angle = math.radians(angle_deg)
+                        dx = math.sin(angle) * 15
+                        dy = -math.cos(angle) * 15
+                        bullet_pool.get_bullet(
+                            player.rect.centerx,
+                            player.rect.top,
+                            dx=dx,
+                            dy=dy,
+                            homing=ammo["homing"],
+                            damage=ammo["damage"] + damage_bonus,
+                        )
                     last_shot_time = current_time
 
-            # đạn player trúng boss
-            if boss.active:
+            current_boss = boss_rush.current_boss()
+
+            # đạn player trúng boss hiện tại
+            if current_boss is not None and current_boss.active:
                 for bullet in bullet_pool.active_bullets:
-                    if bullet.active and bullet.rect.colliderect(boss.rect):
+                    if bullet.active and bullet.rect.colliderect(current_boss.rect):
                         bullet.active = False
-                        boss.health -= 15
-                        if boss.health <= 0:
-                            boss.health = 0
-                            boss.active = False
-                            # hết máu thì qua màn thắng
-                            game_state = "win"
+                        current_boss.take_damage(bullet.damage)
+                        if not current_boss.active and current_boss.health <= 0:
+                            if boss_rush.has_next_boss():
+                                game_state = "upgrade"
+                                enemy_bullet_pool.clear()
+                                bullet_pool.clear()
+                            else:
+                                game_state = "win"
+                            current_boss = boss_rush.current_boss()
                             break
 
             # đạn boss hoặc boss chạm player
@@ -395,7 +690,7 @@ def main():
                         break
                 
                 # chạm boss
-                if not hit and boss.active and player.rect.colliderect(boss.rect):
+                if not hit and current_boss is not None and current_boss.active and player.rect.colliderect(current_boss.rect):
                     hit = True
                 #nếu trúng đạn
                 if hit:
@@ -407,16 +702,81 @@ def main():
 
         # vẽ frame mới
         screen.fill(BLACK)
-        
-        if game_state == "playing":
-            boss.draw(screen)
+
+        if game_state == "menu":
+            title_text = font_large.render("BOSS RUSH", True, RED)
+            title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
+            screen.blit(title_text, title_rect)
+
+            menu_1 = font_small.render("Nhan 1: Dan thang - Damage cao", True, (255, 255, 255))
+            menu_2 = font_small.render("Nhan 2: Dan tim duong - Damage thap", True, (255, 255, 255))
+            menu_3 = font_small.render("Nhan 3: Dan quat - Damage trung binh", True, (255, 255, 255))
+            menu_q = font_small.render("Nhan Q de thoat", True, (180, 180, 180))
+
+            screen.blit(menu_1, menu_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 30)))
+            screen.blit(menu_2, menu_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 20)))
+            screen.blit(menu_3, menu_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 70)))
+            screen.blit(menu_q, menu_q.get_rect(center=(WIDTH//2, HEIGHT//2 + 130)))
+
+        elif game_state == "playing":
+            boss_rush.draw(screen)
+            current_boss = boss_rush.current_boss()
+            if current_boss is not None:
+                marker_x = max(15, min(WIDTH - 15, current_boss.rect.centerx))
+                marker_y = HEIGHT - 10
+                draw_boss_position_marker(screen, marker_x, marker_y)
+
             player.draw(screen, current_time)
-            bullet_pool.update_and_draw(screen, boss)
+            bullet_pool.update_and_draw(screen, boss_rush.current_boss())
             enemy_bullet_pool.update_and_draw(screen)
 
             # hiện số mạng
             lives_text = font_small.render(f"Lives: {player.lives}", True, (255, 255, 255))
             screen.blit(lives_text, (10, 10))
+
+            ammo_text = font_small.render(f"Ammo: {ammo_configs[selected_ammo]['name']}", True, (255, 255, 255))
+            screen.blit(ammo_text, (10, 45))
+
+            if current_boss is not None:
+                boss_text = font_small.render(
+                    f"Boss: {boss_rush.current_index + 1}/{len(boss_rush.bosses)} - {current_boss.name}",
+                    True,
+                    (255, 255, 255),
+                )
+                screen.blit(boss_text, (10, 80))
+
+            damage_text = font_small.render(f"Damage Bonus: +{damage_bonus}", True, (255, 255, 255))
+            screen.blit(damage_text, (10, 115))
+
+        elif game_state == "upgrade":
+            title_text = font_large.render("UPGRADE", True, YELLOW)
+            title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
+            screen.blit(title_text, title_rect)
+
+            line_1 = font_small.render("1: +1 Life", True, (255, 255, 255))
+            line_2 = font_small.render("2: Switch Fire Mode", True, (255, 255, 255))
+            line_3 = font_small.render("3: +Damage (Stack)", True, (255, 255, 255))
+            line_4 = font_small.render(f"Current Damage Bonus: +{damage_bonus}", True, (200, 200, 200))
+            line_5 = font_small.render("Press Q to Quit", True, (180, 180, 180))
+
+            screen.blit(line_1, line_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 30)))
+            screen.blit(line_2, line_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 20)))
+            screen.blit(line_3, line_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 70)))
+            screen.blit(line_4, line_4.get_rect(center=(WIDTH//2, HEIGHT//2 + 120)))
+            screen.blit(line_5, line_5.get_rect(center=(WIDTH//2, HEIGHT//2 + 170)))
+
+        elif game_state == "upgrade_fire_mode":
+            title_text = font_large.render("SELECT FIRE MODE", True, YELLOW)
+            title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
+            screen.blit(title_text, title_rect)
+
+            line_1 = font_small.render(f"1: {fire_mode_label(fire_mode_choices[0])}", True, (255, 255, 255))
+            line_2 = font_small.render(f"2: {fire_mode_label(fire_mode_choices[1])}", True, (255, 255, 255))
+            line_3 = font_small.render("Q: Back", True, (180, 180, 180))
+
+            screen.blit(line_1, line_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 10)))
+            screen.blit(line_2, line_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 40)))
+            screen.blit(line_3, line_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 110)))
         
         elif game_state == "win":
             # màn hình thắng
