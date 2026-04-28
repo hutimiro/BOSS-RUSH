@@ -3,7 +3,7 @@ BÁO CÁO ĐỒ ÁN MÔN HỌC
 Lớp: IT003.Q21.CTTN
 
 SINH VIÊN THỰC HIỆN
-Mã sinh viên:25520228	Họ và tên: Quách 
+Mã sinh viên:25520228	Họ và tên: Quách Cường
 
 ---
 
