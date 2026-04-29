@@ -49,3 +49,39 @@ Out/Returns: list (Danh sách các đối tượng nằm bên trong hoặc có g
 Purpose: Truy vấn và trả về tập hợp con các đối tượng có khả năng xảy ra va chạm trong một khu vực nhất định. Hàm này là cốt lõi để thu hẹp phạm vi kiểm tra va chạm.
 Last modify,When: 29/04/2026
 """
+```
+
+Object Pool (Hàng đợi Deque)
+
+Mẫu thiết kế Object Pool kết hợp với cấu trúc dữ liệu Hàng đợi hai đầu (collections.deque) được sử dụng để quản lý vòng đời của đạn, tránh việc cấp phát (allocate) và giải phóng (deallocate) bộ nhớ liên tục gây sụt giảm khung hình.
+```python
+"""
+Define: __init__(self, size)
+In/Args: 
+    - self
+    - size (int): Kích thước tối đa của hồ chứa đạn.
+Out/Returns: None
+Purpose: Khởi tạo cấu trúc dữ liệu hàng đợi hai đầu (collections.deque) để chứa sẵn các object đạn nhằm tái sử dụng liên tục. 
+Last modify,When: 29/04/2026
+"""
+
+"""
+Define: get_bullet(self, x, y, dx, dy, ...)
+In/Args: 
+    - self
+    - x, y, dx, dy...: Các tham số cấu hình trạng thái ban đầu của viên đạn.
+Out/Returns: None
+Purpose: Lấy một viên đạn đang "rảnh" từ đầu hàng đợi (độ phức tạp O(1) với popleft) ra để sử dụng, cập nhật trạng thái hoạt động (active = True) và đưa vào danh sách đang bay.
+Last modify,When: 29/04/2026
+"""
+
+"""
+Define: update(self, target=None)
+In/Args: 
+    - self
+    - target: Mục tiêu truyền vào (dùng cho các loại đạn có chức năng tự nhắm).
+Out/Returns: None
+Purpose: Duyệt qua các viên đạn đang bay để cập nhật vị trí. Nếu đạn tắt (ra khỏi màn hình hoặc trúng mục tiêu), hàm sẽ tự động thu hồi và đẩy lại vào cuối hàng đợi (độ phức tạp O(1) với append) để chờ tái sử dụng.
+Last modify,When: 29/04/2026
+"""
+```
