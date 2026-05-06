@@ -9,6 +9,8 @@ import pygame
 import sys
 import math
 import random
+import re
+from pathlib import Path
 from collections import deque
 
 # khởi tạo 
@@ -27,12 +29,208 @@ GREEN = (0, 255, 0)
 YELLOW = (255, 255, 0)
 
 
+ASSET_ROOT = Path(__file__).resolve().parent / "Royalty Free Game Art - Spaceships from Unlucky Studio" / "Spaceship_art_pack"
+ICON_ROOT = Path(__file__).resolve().parent / "free-pixel-art-sci-fi-icons-pack" / "PNG"
+FONT_ROOT = Path(__file__).resolve().parent / "nulshock"
+NULSHOCK_FONT_PATH = FONT_ROOT / "Nulshock Bd.otf"
+_IMAGE_CACHE = {}
+
+
+def _natural_key(path):
+    parts = re.split(r"(\d+)", path.stem)
+    return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+
+def load_image(*parts, alpha=True, root=ASSET_ROOT):
+    cache_key = (str(root), parts, alpha)
+    if cache_key in _IMAGE_CACHE:
+        return _IMAGE_CACHE[cache_key]
+
+    path = root.joinpath(*parts)
+    try:
+        image = pygame.image.load(str(path))
+        image = image.convert_alpha() if alpha else image.convert()
+        _IMAGE_CACHE[cache_key] = image
+        return image
+    except (pygame.error, FileNotFoundError):
+        return None
+
+
+def load_sequence(*parts):
+    directory = ASSET_ROOT.joinpath(*parts)
+    if not directory.exists():
+        return []
+
+    frames = []
+    for path in sorted(directory.glob("*.png"), key=_natural_key):
+        image = load_image(*(parts + (path.name,)))
+        if image is not None:
+            frames.append(image)
+    return frames
+
+
+def fit_image(image, size):
+    if image is None:
+        return None
+    if image.get_size() == size:
+        return image
+    return pygame.transform.smoothscale(image, size)
+
+
+def draw_centered_image(surface, image, center, size=None, angle=None):
+    if image is None:
+        return False
+
+    sprite = image
+    if size is not None:
+        sprite = fit_image(sprite, size)
+    if angle is not None:
+        sprite = pygame.transform.rotozoom(sprite, angle, 1.0)
+
+    rect = sprite.get_rect(center=center)
+    surface.blit(sprite, rect)
+    return True
+
+
+def bullet_angle(dx, dy):
+    if dx == 0 and dy == 0:
+        return 0.0
+    return math.degrees(math.atan2(-dy, dx)) - 90.0
+
+
+PLAYER_FRAMES = load_sequence("Blue", "spaceship_blue_animation")
+if not PLAYER_FRAMES:
+    fallback_player = load_image("Blue", "alienship_new.png") or load_image("Blue", "Communicationship_blue.png")
+    PLAYER_FRAMES = [fallback_player] if fallback_player is not None else []
+
+ENEMY_FRAMES = load_sequence("Red", "Enemy_animation")
+if not ENEMY_FRAMES:
+    fallback_enemy = load_image("Red", "spaceship_enemy_red.png") or load_image("Red", "alienship_new_red_try.png")
+    ENEMY_FRAMES = [fallback_enemy] if fallback_enemy is not None else []
+
+BACKGROUND_IMAGE = load_image("Background", "background.jpg", alpha=False)
+PLAYER_BULLET_IMAGE = load_image("Blue", "bullet.png")
+ENEMY_BULLET_IMAGE = load_image("Red", "bullet_red.png")
+BOUNCE_BULLET_IMAGE = load_image("Red", "space_mine.png") or load_image("Red", "space_mine_blue.png") or ENEMY_BULLET_IMAGE
+EXPLOSIVE_BULLET_IMAGE = load_image("Red", "space_bomb.png") or load_image("Red", "space_bomb_blue.png") or ENEMY_BULLET_IMAGE
+
+BOSS_VISUALS = {
+    "circle": load_image("Red", "mothership_try.png") or load_image("Red", "mothership_blue.png"),
+    "fan": load_image("Red", "alienship_new_red_try.png") or load_image("Red", "alienship_new.png"),
+    "orbit": load_image("Red", "space_mine.png") or load_image("Red", "space_mine_blue.png"),
+    "triple_left": load_image("Red", "Communicationship2.png") or load_image("Blue", "Communicationship_blue.png"),
+    "triple_right": load_image("Red", "small_ships.png") or load_image("Blue", "small_ships.png"),
+    "explode": load_image("Red", "space_bomb.png") or load_image("Blue", "space_bomb_blue.png"),
+    "generic": ENEMY_FRAMES[0] if ENEMY_FRAMES else None,
+}
+
+
+def draw_background(surface):
+    if BACKGROUND_IMAGE is not None:
+        surface.blit(fit_image(BACKGROUND_IMAGE, (WIDTH, HEIGHT)), (0, 0))
+    else:
+        surface.fill(BLACK)
+
+
+def load_icon(*parts, alpha=True):
+    return load_image(*parts, alpha=alpha, root=ICON_ROOT)
+
+
+def load_nulshock_font(size):
+    try:
+        return pygame.font.Font(str(NULSHOCK_FONT_PATH), size)
+    except (FileNotFoundError, OSError, pygame.error):
+        return pygame.font.SysFont(None, size)
+
+
+BACKGROUND_SCROLL_SPEED = -10
+BACKGROUND_OFFSET = 0
+
+GUN_TYPE_ICONS = {
+    1: load_icon("Shooting1.png"),
+    2: load_icon("Shooting2.png"),
+    3: load_icon("Shooting3.png"),
+}
+
+UPGRADE_OPTION_ICONS = {
+    1: load_icon("OptionLife.png"),
+    2: load_icon("OptionChange.png"),
+    3: load_icon("OptionDamage.png"),
+}
+
+BOSS_STAGE_ICONS = [
+    load_icon("4.png"),
+    load_icon("5.png"),
+    load_icon("6.png"),
+]
+
+
+def boss_stage_icon(index):
+    if not BOSS_STAGE_ICONS:
+        return None
+    return BOSS_STAGE_ICONS[index % len(BOSS_STAGE_ICONS)]
+
+
+def draw_text_with_icon(surface, icon, text, font, x, y, color=(255, 255, 255), icon_size=(24, 24), gap=8, align="left", icon_after=False):
+    text_surface = font.render(text, True, color)
+
+    if icon is None:
+        surface.blit(text_surface, text_surface.get_rect(topleft=(x, y)) if align == "left" else text_surface.get_rect(center=(x, y)))
+        return
+
+    icon_surface = fit_image(icon, icon_size)
+    if icon_surface is None:
+        surface.blit(text_surface, text_surface.get_rect(topleft=(x, y)) if align == "left" else text_surface.get_rect(center=(x, y)))
+        return
+
+    if align == "center":
+        total_width = icon_surface.get_width() + gap + text_surface.get_width()
+        start_x = x - total_width // 2
+        if icon_after:
+            text_rect = text_surface.get_rect(midleft=(start_x, y))
+            icon_rect = icon_surface.get_rect(midleft=(start_x + text_surface.get_width() + gap, y))
+        else:
+            icon_rect = icon_surface.get_rect(midleft=(start_x, y))
+            text_rect = text_surface.get_rect(midleft=(start_x + icon_surface.get_width() + gap, y))
+    else:
+        if icon_after:
+            text_rect = text_surface.get_rect(topleft=(x, y))
+            icon_rect = icon_surface.get_rect(midleft=(x + text_surface.get_width() + gap, y + text_surface.get_height() // 2))
+        else:
+            icon_rect = icon_surface.get_rect(topleft=(x, y))
+            text_rect = text_surface.get_rect(midleft=(x + icon_surface.get_width() + gap, y + icon_surface.get_height() // 2))
+
+    surface.blit(icon_surface, icon_rect)
+    surface.blit(text_surface, text_rect)
+
+
+def draw_scrolling_background(surface, offset):
+    if BACKGROUND_IMAGE is None:
+        surface.fill(BLACK)
+        return
+
+    background = fit_image(BACKGROUND_IMAGE, (WIDTH, HEIGHT))
+    if background is None:
+        surface.fill(BLACK)
+        return
+
+    tile_height = background.get_height()
+    if tile_height <= 0:
+        surface.blit(background, (0, 0))
+        return
+
+    y = -(offset % tile_height)
+    while y < HEIGHT:
+        surface.blit(background, (0, y))
+        y += tile_height
+
+
 #object pool
 
 class Bullet:
     def __init__(self):
         """bullet của player"""
-        self.rect = pygame.Rect(0, 0, 8, 16) # kích thước đạn
+        self.rect = pygame.Rect(0, 0, 14, 28) # kích thước đạn
         self.active = False
         self.speed = 15 # speed dương cho dễ tính hướng
         self.exact_x = 0.0
@@ -103,9 +301,14 @@ class Bullet:
     def draw(self, surface):
         """vẽ đạn"""
         if self.active:
-            bullet_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-            pygame.draw.rect(bullet_surface, (255, 0, 0, 120), bullet_surface.get_rect())
-            surface.blit(bullet_surface, self.rect.topleft)
+            sprite = PLAYER_BULLET_IMAGE
+            angle = bullet_angle(self.dx, self.dy)
+            if sprite is not None:
+                draw_centered_image(surface, sprite, self.rect.center, self.rect.size, angle=angle)
+            else:
+                bullet_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+                pygame.draw.rect(bullet_surface, (255, 0, 0, 120), bullet_surface.get_rect())
+                surface.blit(bullet_surface, self.rect.topleft)
 
 class BulletPool:
     def __init__(self, size):
@@ -148,7 +351,7 @@ class BulletPool:
 class EnemyBullet:
     def __init__(self):
         """đạn của boss"""
-        self.rect = pygame.Rect(0, 0, 10, 10)
+        self.rect = pygame.Rect(0, 0, 14, 14)
         self.active = False
         self.speed_x = 0
         self.speed_y = 0
@@ -204,6 +407,7 @@ class EnemyBullet:
         """bắn đạn boss """
         # lưu vận tốc để update mỗi frame
         self.active = True
+        size = max(int(round(size * 1.25)), 14)
         self.rect.size = (size, size)
         self.exact_x = float(x)
         self.exact_y = float(y)
@@ -342,15 +546,30 @@ class EnemyBullet:
     def draw(self, surface):
         """vẽ enemy bullet"""
         if self.active:
-            if self.is_child:
-                color = (200, 255, 200)
-            elif self.bullet_kind == "explode_main":
-                color = (255, 90, 90)
+            if self.bullet_kind == "explode_main":
+                sprite = EXPLOSIVE_BULLET_IMAGE
+            elif self.bounces_left > 0:
+                sprite = BOUNCE_BULLET_IMAGE
+            elif self.is_child:
+                sprite = ENEMY_BULLET_IMAGE
             elif self.squiggle:
-                color = (255, 120, 255)
+                sprite = ENEMY_BULLET_IMAGE
             else:
-                color = (255, 165, 0) if self.bounces_left > 0 else YELLOW # cam khi còn nảy
-            pygame.draw.circle(surface, color, self.rect.center, max(self.rect.width, self.rect.height) // 2)
+                sprite = ENEMY_BULLET_IMAGE
+
+            angle = bullet_angle(self.speed_x, self.speed_y)
+            if sprite is not None:
+                draw_centered_image(surface, sprite, self.rect.center, self.rect.size, angle=angle)
+            else:
+                if self.is_child:
+                    color = (200, 255, 200)
+                elif self.bullet_kind == "explode_main":
+                    color = (255, 90, 90)
+                elif self.squiggle:
+                    color = (255, 120, 255)
+                else:
+                    color = (255, 165, 0) if self.bounces_left > 0 else YELLOW
+                pygame.draw.circle(surface, color, self.rect.center, max(self.rect.width, self.rect.height) // 2)
 
 class EnemyBulletPool:
     def __init__(self, size):
@@ -507,6 +726,8 @@ class Player:
         self.is_focused = False
         self.lives = 4
         self.invulnerable_until = 0
+        self.sprite_frames = PLAYER_FRAMES
+        self.sprite_frame_delay = 120
 
     def move(self, keys):
         """di chuyển player theo keys"""
@@ -537,18 +758,34 @@ class Player:
         if current_time < self.invulnerable_until and (current_time // 100) % 2 == 0:
             return
 
-        if self.is_focused:
+        sprite = None
+        if self.sprite_frames:
+            frame_index = (current_time // self.sprite_frame_delay) % len(self.sprite_frames)
+            sprite = self.sprite_frames[frame_index]
+
+        if sprite is not None:
+            if self.is_focused:
+                display_size = (44, 44)
+                focused_sprite = fit_image(sprite, display_size)
+                if focused_sprite is not None:
+                    focused_sprite = focused_sprite.copy()
+                    focused_sprite.set_alpha(120)
+                    surface.blit(focused_sprite, focused_sprite.get_rect(center=self.rect.center))
+                pygame.draw.circle(surface, BLUE, self.rect.center, max(4, min(self.rect.width, self.rect.height) // 2))
+            else:
+                draw_centered_image(surface, sprite, self.rect.center, (58, 58))
+        elif self.is_focused:
             # giữ shift thì thu nhỏ hitbõ
             phantom_rect = self.rect.copy()
             phantom_rect.inflate_ip(0, 0)
             pygame.draw.rect(surface, (50, 75, 125), phantom_rect) 
             pygame.draw.rect(surface, BLUE, self.rect)
-            pygame.draw.circle(surface, BLUE, self.rect.center, 4)
+            pygame.draw.circle(surface, BLUE, self.rect.center, max(4, min(self.rect.width, self.rect.height) // 2))
         else:
             pygame.draw.rect(surface, BLUE, self.rect)
 
 class BaseBoss:
-    def __init__(self, x, y, width, height, health, color, name, target_y=100, speed=2, shoot_delay=200, entry_delay=1000):
+    def __init__(self, x, y, width, height, health, color, name, target_y=100, speed=2, shoot_delay=200, entry_delay=1000, sprite_image=None, sprite_frames=None):
         """boss nền để tạo nhiều kiểu boss khác nhau"""
         self.rect = pygame.Rect(x, y, width, height)
         self.target_y = target_y
@@ -564,6 +801,8 @@ class BaseBoss:
         self.name = name
         self.entry_delay = entry_delay
         self.spawn_time = None
+        self.sprite_image = sprite_image
+        self.sprite_frames = sprite_frames if sprite_frames is not None else ENEMY_FRAMES
 
     def update(self, current_time, enemy_bullet_pool):
         """cập nhật chuyển động và gọi bắn"""
@@ -614,7 +853,18 @@ class BaseBoss:
         if not self.active:
             return
 
-        pygame.draw.rect(surface, self.color, self.rect)
+        sprite = None
+        if self.sprite_image is not None:
+            sprite = self.sprite_image
+        elif self.sprite_frames:
+            frame_index = (pygame.time.get_ticks() // 120) % len(self.sprite_frames)
+            sprite = self.sprite_frames[frame_index]
+
+        if sprite is not None:
+            sprite = pygame.transform.flip(sprite, False, True)
+            draw_centered_image(surface, sprite, self.rect.center, self.rect.size)
+        else:
+            pygame.draw.rect(surface, self.color, self.rect)
 
         center = self.rect.center
         radius = max(self.rect.width, self.rect.height) // 2 + 20
@@ -630,7 +880,7 @@ class BaseBoss:
 
 class CircleShotBoss(BaseBoss):
     def __init__(self):
-        super().__init__(WIDTH // 2 - 40, -100, 80, 80, 1000, GREEN, "Circle Shot Boss", entry_delay=1000)
+        super().__init__(WIDTH // 2 - 40, -100, 80, 80, 1000, GREEN, "Circle Shot Boss", entry_delay=1000, sprite_image=BOSS_VISUALS["circle"])
 
     def shoot(self, enemy_bullet_pool):
         """bắn vòng đạn tròn"""
@@ -651,7 +901,7 @@ class CircleShotBoss(BaseBoss):
 
 class FanBounceBoss(BaseBoss):
     def __init__(self):
-        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1200, (80, 220, 255), "Fan Bounce Boss", shoot_delay=240, entry_delay=1000)
+        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1200, (80, 220, 255), "Fan Bounce Boss", shoot_delay=240, entry_delay=1000, sprite_image=BOSS_VISUALS["fan"])
 
     def shoot(self, enemy_bullet_pool):
         """bắn quạt và có đạn nảy"""
@@ -680,7 +930,7 @@ class FanBounceBoss(BaseBoss):
 
 class OrbitCircleBoss(BaseBoss):
     def __init__(self):
-        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1600, (255, 120, 120), "Orbit Circle Boss", target_y=130, speed=2, shoot_delay=450, entry_delay=1000)
+        super().__init__(WIDTH // 2 - 45, -100, 90, 90, 1600, (255, 120, 120), "Orbit Circle Boss", target_y=130, speed=2, shoot_delay=450, entry_delay=1000, sprite_image=BOSS_VISUALS["orbit"])
         self.patrol_speed = 2.5
         self.patrol_direction = 1
         self.patrol_ready = False
@@ -777,7 +1027,7 @@ def draw_boss_health_bar(surface, x, y, width, height, health_ratio, color, labe
         pygame.draw.rect(surface, color, filled_rect, border_radius=4)
     pygame.draw.rect(surface, (220, 220, 220), background_rect, 2, border_radius=4)
 
-    label_surface = pygame.font.SysFont(None, 22).render(label, True, (255, 255, 255))
+    label_surface = load_nulshock_font(18).render(label, True, (255, 255, 255))
     surface.blit(label_surface, (x, y - 18))
 
 
@@ -804,6 +1054,7 @@ class TripleSquiggleBossStage:
             speed=2,
             shoot_delay=360,
             entry_delay=self.entry_delay,
+            sprite_frames=ENEMY_FRAMES,
         )
         self.left_boss = SquiggleBoss(
             WIDTH // 2 - 170,
@@ -817,6 +1068,7 @@ class TripleSquiggleBossStage:
             speed=2,
             shoot_delay=260,
             entry_delay=self.entry_delay,
+            sprite_image=BOSS_VISUALS["triple_left"],
         )
         self.right_boss = SquiggleBoss(
             WIDTH // 2 + 92,
@@ -830,6 +1082,7 @@ class TripleSquiggleBossStage:
             speed=2,
             shoot_delay=260,
             entry_delay=self.entry_delay,
+            sprite_image=BOSS_VISUALS["triple_right"],
         )
         self.bosses = [self.center_boss, self.left_boss, self.right_boss]
         self.max_health = sum(boss.max_health for boss in self.bosses)
@@ -924,7 +1177,7 @@ class TripleSquiggleBossStage:
 
 class ExplodeBulletBoss(BaseBoss):
     def __init__(self):
-        super().__init__(WIDTH // 2 - 46, -100, 92, 92, 1800, (190, 255, 120), "Explode Bullet Boss", target_y=110, speed=2, shoot_delay=620, entry_delay=1000)
+        super().__init__(WIDTH // 2 - 46, -100, 92, 92, 1800, (190, 255, 120), "Explode Bullet Boss", target_y=110, speed=2, shoot_delay=620, entry_delay=1000, sprite_image=BOSS_VISUALS["explode"])
 
     def shoot(self, enemy_bullet_pool):
         """bắn 6 đạn trung bình có timer nổ"""
@@ -951,6 +1204,109 @@ class ExplodeBulletBoss(BaseBoss):
                 child_count=8,
                 child_size=10,
                 child_speed=4.2,
+                child_damage=1,
+            )
+
+
+class RandomPatternBoss(BaseBoss):
+    def __init__(self, x, y, width, height, health, color, name, target_y=100, speed=2, shoot_delay=260, entry_delay=1000, sprite_image=None, sprite_frames=None):
+        if sprite_image is None and sprite_frames is None:
+            sprite_frames = ENEMY_FRAMES
+        super().__init__(x, y, width, height, health, color, name, target_y=target_y, speed=speed, shoot_delay=shoot_delay, entry_delay=entry_delay, sprite_image=sprite_image, sprite_frames=sprite_frames)
+
+    def shoot(self, enemy_bullet_pool):
+        """bắn ngẫu nhiên theo nhiều hình khác nhau"""
+        pattern = random.choice([
+            self._shoot_circle,
+            self._shoot_fan,
+            self._shoot_cross,
+            self._shoot_squiggle,
+            self._shoot_explode,
+        ])
+        pattern(enemy_bullet_pool)
+
+    def _shoot_circle(self, enemy_bullet_pool):
+        bullet_count = random.randint(10, 16)
+        base_speed = random.uniform(2.6, 4.0)
+
+        for index in range(bullet_count):
+            angle = math.tau * index / bullet_count
+            speed = base_speed + random.uniform(-0.25, 0.35)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(10, 16), damage=1)
+
+    def _shoot_fan(self, enemy_bullet_pool):
+        bullet_count = random.randint(5, 9)
+        spread_deg = random.uniform(50.0, 95.0)
+        base_angle = math.pi / 2 + random.uniform(-0.5, 0.5)
+        base_speed = random.uniform(3.0, 5.0)
+
+        for index in range(bullet_count):
+            if bullet_count == 1:
+                offset = 0.0
+            else:
+                t = index / (bullet_count - 1)
+                offset = math.radians(-spread_deg / 2 + spread_deg * t)
+
+            angle = base_angle + offset
+            speed = base_speed + random.uniform(-0.4, 0.6)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(10, 15), damage=1)
+
+    def _shoot_cross(self, enemy_bullet_pool):
+        angles = [0, 45, 90, 135, 180, 225, 270, 315]
+        speed = random.uniform(2.6, 4.2)
+
+        for angle_deg in angles:
+            angle = math.radians(angle_deg)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(12, 18), damage=1)
+
+    def _shoot_squiggle(self, enemy_bullet_pool):
+        for _ in range(random.randint(5, 7)):
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(3.0, 4.6)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(
+                self.rect.centerx,
+                self.rect.centery,
+                dx,
+                dy,
+                0,
+                size=random.randint(12, 16),
+                squiggle=True,
+                wobble_amplitude=random.uniform(4.0, 9.0),
+                wobble_frequency=random.uniform(0.10, 0.20),
+                wobble_phase=random.uniform(0.0, math.tau),
+            )
+
+    def _shoot_explode(self, enemy_bullet_pool):
+        bullet_count = random.randint(6, 8)
+        base_speed = random.uniform(2.4, 3.2)
+
+        for index in range(bullet_count):
+            angle = math.tau * index / bullet_count
+            speed = base_speed + random.uniform(-0.2, 0.2)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(
+                self.rect.centerx,
+                self.rect.centery,
+                dx,
+                dy,
+                0,
+                size=random.randint(14, 18),
+                damage=1,
+                explosive=True,
+                bullet_kind="explode_main",
+                explode_after=random.randint(900, 1500),
+                child_count=8,
+                child_size=8,
+                child_speed=4.0,
                 child_damage=1,
             )
 
@@ -999,8 +1355,20 @@ class BossRush:
 # ==========================================
 def main():
     """vòng lặp chính của game"""
+    global BACKGROUND_OFFSET
     player = Player()
-    boss_rush = BossRush([CircleShotBoss(), FanBounceBoss(), OrbitCircleBoss(), TripleSquiggleBossStage(), ExplodeBulletBoss()])
+    boss_rush = BossRush([
+        CircleShotBoss(),
+        FanBounceBoss(),
+        OrbitCircleBoss(),
+        TripleSquiggleBossStage(),
+        ExplodeBulletBoss(),
+        RandomPatternBoss(WIDTH // 2 - 48, -100, 96, 96, 1400, (255, 110, 180), "Chaos Boss A", target_y=95, speed=2, shoot_delay=280, entry_delay=1000, sprite_frames=ENEMY_FRAMES),
+        RandomPatternBoss(WIDTH // 2 - 42, -100, 84, 84, 1500, (110, 255, 190), "Chaos Boss B", target_y=110, speed=2, shoot_delay=250, entry_delay=1000, sprite_image=load_image("Red", "spaceship_enemy_red.png")),
+        RandomPatternBoss(WIDTH // 2 - 50, -100, 100, 100, 1650, (120, 170, 255), "Chaos Boss C", target_y=100, speed=3, shoot_delay=220, entry_delay=1000, sprite_image=load_image("Red", "Communicationship2.png")),
+        RandomPatternBoss(WIDTH // 2 - 44, -100, 88, 88, 1750, (255, 200, 90), "Chaos Boss D", target_y=120, speed=2, shoot_delay=200, entry_delay=1000, sprite_image=load_image("Red", "small_ships.png")),
+        RandomPatternBoss(WIDTH // 2 - 52, -100, 104, 104, 1900, (210, 120, 255), "Chaos Boss E", target_y=105, speed=2, shoot_delay=180, entry_delay=1000, sprite_image=load_image("Red", "alienship_new_red_try.png")),
+    ])
     # pool đạn của player
     bullet_pool = BulletPool(100) 
     # pool đạn của boss
@@ -1053,8 +1421,8 @@ def main():
         pygame.draw.polygon(triangle_surface, (255, 255, 0, 90), triangle_points)
         surface.blit(triangle_surface, (x_position - 14, y_position - 14))
 
-    font_large = pygame.font.SysFont(None, 72)
-    font_small = pygame.font.SysFont(None, 36)
+    font_large = load_nulshock_font(56)
+    font_small = load_nulshock_font(28)
 
     while running:
         current_time = pygame.time.get_ticks()
@@ -1116,6 +1484,8 @@ def main():
                         running = False
 
         if game_state == "playing":
+            BACKGROUND_OFFSET += BACKGROUND_SCROLL_SPEED
+
             # cập nhật
             keys = pygame.key.get_pressed()
             player.move(keys)
@@ -1219,21 +1589,22 @@ def main():
                         game_state = "lose"
 
         # vẽ frame mới
-        screen.fill(BLACK)
+        draw_scrolling_background(screen, BACKGROUND_OFFSET if game_state == "playing" else 0)
+
+        if game_state != "playing":
+            shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 115))
+            screen.blit(shade, (0, 0))
 
         if game_state == "menu":
             title_text = font_large.render("BOSS RUSH", True, RED)
             title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
             screen.blit(title_text, title_rect)
 
-            menu_1 = font_small.render("Nhan 1: Dan thang - Damage cao", True, (255, 255, 255))
-            menu_2 = font_small.render("Nhan 2: Dan tim duong - Damage thap", True, (255, 255, 255))
-            menu_3 = font_small.render("Nhan 3: Dan quat - Damage trung binh", True, (255, 255, 255))
-            menu_q = font_small.render("Nhan Q de thoat", True, (180, 180, 180))
-
-            screen.blit(menu_1, menu_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 30)))
-            screen.blit(menu_2, menu_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 20)))
-            screen.blit(menu_3, menu_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 70)))
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[1], "Press 1 : Machine gun", font_small, WIDTH//2, HEIGHT//2 - 30, color=(255, 255, 255), icon_size=(28, 28), align="center")
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[2], "Press 2 : Homing missles", font_small, WIDTH//2, HEIGHT//2 + 20, color=(255, 255, 255), icon_size=(28, 28), align="center")
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[3], "Press 3 : Spraying", font_small, WIDTH//2, HEIGHT//2 + 70, color=(255, 255, 255), icon_size=(28, 28), align="center")
+            menu_q = font_small.render("Press Q to quit", True, (180, 180, 180))
             screen.blit(menu_q, menu_q.get_rect(center=(WIDTH//2, HEIGHT//2 + 130)))
 
         elif game_state == "playing":
@@ -1258,16 +1629,21 @@ def main():
             lives_text = font_small.render(f"Lives: {player.lives}", True, (255, 255, 255))
             screen.blit(lives_text, (10, 10))
 
-            ammo_text = font_small.render(f"Ammo: {ammo_configs[selected_ammo]['name']}", True, (255, 255, 255))
-            screen.blit(ammo_text, (10, 45))
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[selected_ammo], "Ammo:", font_small, 10, 45, color=(255, 255, 255), icon_size=(22, 22), align="left", icon_after=True)
 
             if current_boss is not None:
-                boss_text = font_small.render(
-                    f"Boss: {boss_rush.current_index + 1}/{len(boss_rush.bosses)} - {current_boss.name}",
-                    True,
-                    (255, 255, 255),
+                draw_text_with_icon(
+                    screen,
+                    boss_stage_icon(boss_rush.current_index),
+                    f"Boss: {boss_rush.current_index + 1}/{len(boss_rush.bosses)}",
+                    font_small,
+                    10,
+                    80,
+                    color=(255, 255, 255),
+                    icon_size=(22, 22),
+                    align="left",
+                    icon_after=True,
                 )
-                screen.blit(boss_text, (10, 80))
 
             damage_text = font_small.render(f"Damage Bonus: +{damage_bonus}", True, (255, 255, 255))
             screen.blit(damage_text, (10, 115))
@@ -1277,15 +1653,12 @@ def main():
             title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
             screen.blit(title_text, title_rect)
 
-            line_1 = font_small.render("1: +1 Life", True, (255, 255, 255))
-            line_2 = font_small.render("2: Switch Fire Mode", True, (255, 255, 255))
-            line_3 = font_small.render("3: +Damage (Stack)", True, (255, 255, 255))
+            draw_text_with_icon(screen, UPGRADE_OPTION_ICONS[1], "1: +1 Life", font_small, WIDTH//2, HEIGHT//2 - 30, color=(255, 255, 255), icon_size=(28, 28), align="center")
+            draw_text_with_icon(screen, UPGRADE_OPTION_ICONS[2], "2: Switch Fire Mode", font_small, WIDTH//2, HEIGHT//2 + 20, color=(255, 255, 255), icon_size=(28, 28), align="center")
+            draw_text_with_icon(screen, UPGRADE_OPTION_ICONS[3], "3: +Damage (Stack)", font_small, WIDTH//2, HEIGHT//2 + 70, color=(255, 255, 255), icon_size=(28, 28), align="center")
             line_4 = font_small.render(f"Current Damage Bonus: +{damage_bonus}", True, (200, 200, 200))
             line_5 = font_small.render("Press Q to Quit", True, (180, 180, 180))
 
-            screen.blit(line_1, line_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 30)))
-            screen.blit(line_2, line_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 20)))
-            screen.blit(line_3, line_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 70)))
             screen.blit(line_4, line_4.get_rect(center=(WIDTH//2, HEIGHT//2 + 120)))
             screen.blit(line_5, line_5.get_rect(center=(WIDTH//2, HEIGHT//2 + 170)))
 
@@ -1294,12 +1667,10 @@ def main():
             title_rect = title_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 140))
             screen.blit(title_text, title_rect)
 
-            line_1 = font_small.render(f"1: {fire_mode_label(fire_mode_choices[0])}", True, (255, 255, 255))
-            line_2 = font_small.render(f"2: {fire_mode_label(fire_mode_choices[1])}", True, (255, 255, 255))
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[fire_mode_choices[0]], "1:", font_small, WIDTH//2, HEIGHT//2 - 10, color=(255, 255, 255), icon_size=(28, 28), align="center", icon_after=True)
+            draw_text_with_icon(screen, GUN_TYPE_ICONS[fire_mode_choices[1]], "2:", font_small, WIDTH//2, HEIGHT//2 + 40, color=(255, 255, 255), icon_size=(28, 28), align="center", icon_after=True)
             line_3 = font_small.render("Q: Back", True, (180, 180, 180))
 
-            screen.blit(line_1, line_1.get_rect(center=(WIDTH//2, HEIGHT//2 - 10)))
-            screen.blit(line_2, line_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 40)))
             screen.blit(line_3, line_3.get_rect(center=(WIDTH//2, HEIGHT//2 + 110)))
         
         elif game_state == "win":
@@ -1308,9 +1679,10 @@ def main():
             win_rect = win_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 50))
             screen.blit(win_text, win_rect)
 
-            prompt_text = font_small.render("Press R to Restart or Q to Quit", True, (255, 255, 255))
-            prompt_rect = prompt_text.get_rect(center=(WIDTH//2, HEIGHT//2 + 20))
-            screen.blit(prompt_text, prompt_rect)
+            prompt_text_1 = font_small.render("Press R to Restart", True, (255, 255, 255))
+            prompt_text_2 = font_small.render("or Q to Quit", True, (255, 255, 255))
+            screen.blit(prompt_text_1, prompt_text_1.get_rect(center=(WIDTH//2, HEIGHT//2 + 15)))
+            screen.blit(prompt_text_2, prompt_text_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 55)))
 
         elif game_state == "lose":
             # màn hình thua
@@ -1318,9 +1690,10 @@ def main():
             lose_rect = lose_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 50))
             screen.blit(lose_text, lose_rect)
 
-            prompt_text = font_small.render("Press R to Restart or Q to Quit", True, (255, 255, 255))
-            prompt_rect = prompt_text.get_rect(center=(WIDTH//2, HEIGHT//2 + 20))
-            screen.blit(prompt_text, prompt_rect)
+            prompt_text_1 = font_small.render("Press R to Restart", True, (255, 255, 255))
+            prompt_text_2 = font_small.render("or Q to Quit", True, (255, 255, 255))
+            screen.blit(prompt_text_1, prompt_text_1.get_rect(center=(WIDTH//2, HEIGHT//2 + 15)))
+            screen.blit(prompt_text_2, prompt_text_2.get_rect(center=(WIDTH//2, HEIGHT//2 + 55)))
 
         pygame.display.flip() # đẩy frame ra màn hình
         clock.tick(FPS)       # giữ fps ổn định
