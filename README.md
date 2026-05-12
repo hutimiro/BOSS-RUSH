@@ -9,18 +9,86 @@ Mã sinh viên:25520228	Họ và tên: Quách Cường
 
 ```python
 """
-Define: Quadtree 
-In/Args: 
-    - obj: Đối tượng cần thêm vào cây .
-    - area (pygame.Rect): Khung giới hạn dùng để truy vấn không gian.
-    Purpose: Cấu trúc dữ liệu phân chia không gian 2D thành các góc tứ phân (Top-Left, Top-Right, Bottom-Left, Bottom-Right) để tối ưu hóa việc quản lý vị trí thực thể. Tự động chia nhỏ node khi đầy và cho phép truy vấn nhanh các đối tượng.
-Last modify,When: 29/04/2026
-"""
-
-"""
-Define: Object Pool 
-In/Args: 
-    - size (int): Số lượng thực thể (đạn) được tạo sẵn trong bộ nhớ.
-    Purpose:  tối ưu hóa bộ nhớ và hiệu suất trò chơi. Hệ thống khởi tạo sẵn một lượng đạn cố định vào hàng đợi hai đầu (deque). Khi bắn, lấy đạn ra dùng (popleft O(1)), và trong quá trình update, nếu đạn ra khỏi màn hình hoặc trúng mục tiêu sẽ lập tức thu hồi lại vào hàng đợi (append O(1)).
-Last modify,When: 29/04/2026
+		"""
+        Define: Cập nhật vị trí và hướng bay tự nhắm của đạn (Homing Bullet)
+        In/Args: 
+            - self: Khởi tạo đối tượng đạn
+            - target: Mục tiêu cần nhắm tới 
+        Out/Returns: không 
+        Purpose: Ứng dụng toán Vector để tạo đạn tự nhắm. Thuật toán tính toán khoảng 
+                 cách (dist) và vector hướng đi (dir_x, dir_y) giữa đạn và mục tiêu. 
+                 Sau đó, áp dụng một hệ số bẻ lái (homing_power).
+        Last modify: 20/4/2026 
+        """
+        
+        
+        
+        """
+        Define: Khởi tạo hồ chứa đạn (Object Pool)
+        In/Args: 
+            - size (int): Số lượng đạn tối đa được cấp phát sẵn trong bộ nhớ.
+        Out/Returns: Không 
+        Purpose: Tránh việc liên tục cấp phát và thu hồi bộ nhớ (tạo/xóa object) làm 
+                 giảm FPS. Ứng dụng `collections.deque` (hàng đợi hai đầu) hoạt động 
+                 như một Danh sách liên kết (Linked List). Khi cần đạn, popleft() lấy 
+                 nhanh đạn rảnh với độ phức tạp O(1). Khi đạn bay ra ngoài hoặc nổ, 
+                 nó được append() trả lại pool để tái sử dụng.
+        Last modify: 21/4/2026
+        """
+        
+        
+        
+        """
+		Define: Cấu trúc dữ liệu phân chia không gian 2D để tối ưu va chạm
+		In/Args: 
+			- bounds (pygame.Rect): Khung giới hạn không gian hiện tại của node
+			- capacity (int): Số lượng vật thể tối đa trước khi node phải tự chia nhỏ
+			- max_depth (int): Độ sâu tối đa của cây để tránh đệ quy vô hạn
+			- depth (int): Độ sâu hiện tại của node
+		Out/Returns: Một đối tượng Quadtree chứa danh sách đạn ở vùng không gian tương ứng
+		Purpose: Thay vì dùng O(N^2) để so sánh mọi viên đạn với nhau, Quadtree chia màn 
+				hình thành 4 góc. giúp game giữ FPS cao.
+		Last modify: 26/4/2026
+		"""
+    
+    
+    
+    """
+        Define: Vòng lặp cập nhật đạn boss và xử lý đạn con sinh ra
+        In/Args:
+            - current_time (int): Thời gian hiện tại của game
+        Out/Returns: None
+        Purpose: Xử lý cơ chế sinh đạn nhổ  
+                 Thuật toán sử dụng mảng tạm thời `spawned_bullets` đóng vai trò 
+                 như một Hàng đợi (Queue). Khi đạn mẹ phát nổ, đạn con được xếp 
+                 vào hàng đợi này và chờ đến cuối vòng lặp mới được giải phóng 
+                 vào pool. 
+        Last modify: 26/4/2026
+        """
+        
+        
+        """
+		Define: Boss với nhiều giai đoạn chiến đấu (Phases)
+		In/Args: từ BaseBoss, nhận các thông số tọa độ, máu, sprite.
+		Out/Returns: Boss có khả năng tự thay đổi hành vi tấn công
+		Purpose: Ứng dụng mô hình State Machine đơn giản. Biến 
+				 `self.phase` chính là State hiện tại. Tùy thuộc vào việc Boss đang ở Phase 1 
+				 hay Phase 2, hàm `update` và `shoot` sẽ rẽ nhánh để áp dụng quy luật 
+				 di chuyển mới (thay vì đứng im thì lướt trái/phải)
+		Last modify: 10/5/2026
+		"""
+		
+		
+		
+		"""
+		Define: Cấu trúc điều phối lịch trình sự kiện trong game
+		In/Args: Không có tham số khởi tạo tĩnh, quản lý bộ nhớ đệm `_events`
+		Out/Returns: Trả về instance của hàng đợi sự kiện
+		Purpose: Quản lý thứ tự chuyển đổi State của game (Chơi -> Nâng cấp -> Màn Mới). 
+				 Áp dụng cấu trúc Hàng đợi ưu tiên (Priority Queue). Bằng cách push 
+				 sự kiện dựa trên khi nào thì sự kiện được phép kích hoạt
+				 và mức độ ưu tiên , game loop có thể 
+				 bốc chính xác luồng sự kiện tiếp
+		Last modify: 11/5/2026
+		"""
 """
