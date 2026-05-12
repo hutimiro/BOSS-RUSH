@@ -143,7 +143,7 @@ def load_nulshock_font(size):
         return pygame.font.SysFont(None, size)
 
 
-BACKGROUND_SCROLL_SPEED = -10
+BACKGROUND_SCROLL_SPEED = -5
 BACKGROUND_OFFSET = 0
 
 GUN_TYPE_ICONS = {
@@ -714,6 +714,35 @@ class Quadtree:
                     child.query(area, found)
 
         return found
+
+class PriorityEventQueue:
+    def __init__(self):
+        self._events = []
+        self._counter = 0
+
+    def push(self, ready_time, priority, state_name, **payload):
+        event = (ready_time, priority, self._counter, state_name, payload)
+        index = 0
+        while index < len(self._events) and self._events[index] <= event:
+            index += 1
+        self._events.insert(index, event)
+        self._counter += 1
+
+    def pop_ready(self, current_time):
+        if not self._events or self._events[0][0] > current_time:
+            return None
+
+        ready_time, priority, order, state_name, payload = self._events.pop(0)
+        return {
+            "ready_time": ready_time,
+            "priority": priority,
+            "order": order,
+            "state": state_name,
+            **payload,
+        }
+
+    def clear(self):
+        self._events.clear()
 
 """player và boss"""
 
@@ -1310,6 +1339,223 @@ class RandomPatternBoss(BaseBoss):
                 child_damage=1,
             )
 
+
+class ChaosPhaseBoss(RandomPatternBoss):
+    def __init__(self):
+        super().__init__(WIDTH // 2 - 70, -140, 140, 140, 2400, (255, 90, 210), "Chaos Phase Boss", target_y=88, speed=2, shoot_delay=170, entry_delay=1200, sprite_image=BOSS_VISUALS["circle"])
+        self.phase = 1
+        self.phase_one_max_health = 2400
+        self.phase_two_max_health = 1800
+        self.phase_one_health = self.phase_one_max_health
+        self.phase_two_health = self.phase_two_max_health
+        self.max_health = self.phase_one_max_health
+        self.health = self.phase_one_health
+        self.phase_two_ready = False
+        self.patrol_speed = 3.0
+        self.patrol_direction = 1
+        self.patrol_ready = False
+        self.left_bound = 50
+        self.right_bound = WIDTH - 50 - self.rect.width
+        self.phase_two_target_y = 120
+
+    def _enter_phase_two(self):
+        self.phase = 2
+        self.max_health = self.phase_two_max_health
+        self.health = self.phase_two_health
+        self.last_shot_time = 0
+        self.ready = False
+        self.patrol_ready = False
+        self.patrol_direction = 1
+        self.phase_two_ready = True
+
+    def take_damage(self, amount, hit_rect=None):
+        if not self.active:
+            return
+
+        if self.phase == 1:
+            self.phase_one_health -= amount
+            if self.phase_one_health <= 0:
+                self.phase_one_health = 0
+                self._enter_phase_two()
+            self.health = self.phase_one_health if self.phase == 1 else self.phase_two_health
+            return
+
+        self.phase_two_health -= amount
+        if self.phase_two_health <= 0:
+            self.phase_two_health = 0
+            self.health = 0
+            self.active = False
+        else:
+            self.health = self.phase_two_health
+
+    def is_cleared(self):
+        return self.phase == 2 and self.phase_two_health <= 0
+
+    def shoot(self, enemy_bullet_pool):
+        """bắn Chaos nhiều đạn hơn boss thường"""
+        pattern = random.choice([
+            self._shoot_chaos_circle,
+            self._shoot_chaos_fan,
+            self._shoot_chaos_cross,
+            self._shoot_chaos_squiggle,
+            self._shoot_chaos_explode,
+        ])
+        pattern(enemy_bullet_pool)
+
+    def _shoot_chaos_circle(self, enemy_bullet_pool):
+        bullet_count = random.randint(16, 24)
+        base_speed = random.uniform(3.2, 5.4)
+
+        for index in range(bullet_count):
+            angle = math.tau * index / bullet_count
+            speed = base_speed + random.uniform(-0.35, 0.45)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(12, 18), damage=1)
+
+    def _shoot_chaos_fan(self, enemy_bullet_pool):
+        bullet_count = random.randint(8, 12)
+        spread_deg = random.uniform(70.0, 120.0)
+        base_angle = math.pi / 2 + random.uniform(-0.7, 0.7)
+        base_speed = random.uniform(3.4, 5.8)
+
+        for index in range(bullet_count):
+            if bullet_count == 1:
+                offset = 0.0
+            else:
+                t = index / (bullet_count - 1)
+                offset = math.radians(-spread_deg / 2 + spread_deg * t)
+
+            angle = base_angle + offset
+            speed = base_speed + random.uniform(-0.5, 0.8)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(12, 18), damage=1)
+
+    def _shoot_chaos_cross(self, enemy_bullet_pool):
+        angles = [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180, 202.5, 225, 247.5, 270, 292.5, 315, 337.5]
+        speed = random.uniform(2.8, 4.8)
+
+        for angle_deg in angles:
+            angle = math.radians(angle_deg)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(self.rect.centerx, self.rect.centery, dx, dy, 0, size=random.randint(10, 16), damage=1)
+
+    def _shoot_chaos_squiggle(self, enemy_bullet_pool):
+        for _ in range(random.randint(8, 10)):
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(3.4, 5.2)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(
+                self.rect.centerx,
+                self.rect.centery,
+                dx,
+                dy,
+                0,
+                size=random.randint(12, 16),
+                squiggle=True,
+                wobble_amplitude=random.uniform(5.0, 10.0),
+                wobble_frequency=random.uniform(0.12, 0.22),
+                wobble_phase=random.uniform(0.0, math.tau),
+            )
+
+    def _shoot_chaos_explode(self, enemy_bullet_pool):
+        bullet_count = random.randint(8, 10)
+        base_speed = random.uniform(2.6, 3.6)
+
+        for index in range(bullet_count):
+            angle = math.tau * index / bullet_count
+            speed = base_speed + random.uniform(-0.2, 0.3)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            enemy_bullet_pool.get_bullet(
+                self.rect.centerx,
+                self.rect.centery,
+                dx,
+                dy,
+                0,
+                size=random.randint(14, 20),
+                damage=1,
+                explosive=True,
+                bullet_kind="explode_main",
+                explode_after=random.randint(1000, 1700),
+                child_count=10,
+                child_size=8,
+                child_speed=4.4,
+                child_damage=1,
+            )
+
+    def update(self, current_time, enemy_bullet_pool):
+        if not self.active:
+            return
+
+        if self.spawn_time is None:
+            self.spawn_time = current_time
+
+        if current_time - self.spawn_time < self.entry_delay:
+            return
+
+        if self.phase == 1:
+            if self.rect.y < self.target_y:
+                self.rect.y += self.speed
+            else:
+                self.ready = True
+
+            if self.ready and current_time - self.last_shot_time > self.shoot_delay:
+                self.shoot(enemy_bullet_pool)
+                self.last_shot_time = current_time
+            return
+
+        if not self.patrol_ready:
+            if self.rect.y < self.phase_two_target_y:
+                self.rect.y += self.speed
+                return
+            self.patrol_ready = True
+            self.rect.y = self.phase_two_target_y
+
+        self.rect.x += self.patrol_direction * self.patrol_speed
+
+        if self.rect.x <= self.left_bound:
+            self.rect.x = self.left_bound
+            self.patrol_direction = 1
+        elif self.rect.x >= self.right_bound:
+            self.rect.x = self.right_bound
+            self.patrol_direction = -1
+
+        if current_time - self.last_shot_time > self.shoot_delay:
+            self.shoot(enemy_bullet_pool)
+            self.last_shot_time = current_time
+
+    def draw(self, surface):
+        if not self.active:
+            return
+
+        sprite = self.sprite_image
+        if sprite is not None:
+            sprite = pygame.transform.flip(sprite, False, True)
+            draw_centered_image(surface, sprite, self.rect.center, self.rect.size)
+        else:
+            pygame.draw.rect(surface, self.color, self.rect)
+
+        center = self.rect.center
+        radius = max(self.rect.width, self.rect.height) // 2 + 28
+        pygame.draw.circle(surface, (50, 50, 50), center, radius, 6)
+
+        bar_width = 290
+        bar_height = 16
+        bar_x = WIDTH // 2 - bar_width // 2
+        draw_boss_health_bar(surface, bar_x, 12, bar_width, bar_height, self.phase_one_health / self.phase_one_max_health, (255, 70, 170), "Chaos Phase P1")
+        draw_boss_health_bar(surface, bar_x, 34, bar_width, bar_height, self.phase_two_health / self.phase_two_max_health, (120, 220, 255), "Chaos Phase P2")
+
+        if self.phase == 1:
+            rect_for_arc = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
+            pygame.draw.arc(surface, RED, rect_for_arc, math.pi / 2, math.pi / 2 + (2 * math.pi * (self.phase_one_health / self.phase_one_max_health)), 5)
+        else:
+            rect_for_arc = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
+            pygame.draw.arc(surface, BLUE, rect_for_arc, math.pi / 2, math.pi / 2 + (2 * math.pi * (self.phase_two_health / self.phase_two_max_health)), 5)
+
 class BossRush:
     def __init__(self, bosses):
         """quản lý danh sách boss theo thứ tự boss rush"""
@@ -1368,6 +1614,7 @@ def main():
         RandomPatternBoss(WIDTH // 2 - 50, -100, 100, 100, 1650, (120, 170, 255), "Chaos Boss C", target_y=100, speed=3, shoot_delay=220, entry_delay=1000, sprite_image=load_image("Red", "Communicationship2.png")),
         RandomPatternBoss(WIDTH // 2 - 44, -100, 88, 88, 1750, (255, 200, 90), "Chaos Boss D", target_y=120, speed=2, shoot_delay=200, entry_delay=1000, sprite_image=load_image("Red", "small_ships.png")),
         RandomPatternBoss(WIDTH // 2 - 52, -100, 104, 104, 1900, (210, 120, 255), "Chaos Boss E", target_y=105, speed=2, shoot_delay=180, entry_delay=1000, sprite_image=load_image("Red", "alienship_new_red_try.png")),
+        ChaosPhaseBoss(),
     ])
     # pool đạn của player
     bullet_pool = BulletPool(100) 
@@ -1381,6 +1628,7 @@ def main():
     damage_bonus = 0
     last_shot_time = 0
     shoot_delay = 100 # thời gian giữa 2 phát
+    state_queue = PriorityEventQueue()
 
     ammo_configs = {
         1: {
@@ -1410,6 +1658,42 @@ def main():
     def fire_mode_label(ammo_id):
         return ammo_configs[ammo_id]["name"]
 
+    def queue_state_change(next_state, current_time, priority, clear_bullets=False, advance_boss=False, reset_shot_timer=False):
+        """đẩy một lần đổi trạng thái vào hàng đợi ưu tiên"""
+        state_queue.push(
+            current_time,
+            priority,
+            next_state,
+            clear_bullets=clear_bullets,
+            advance_boss=advance_boss,
+            reset_shot_timer=reset_shot_timer,
+        )
+
+    def apply_state_change(current_time):
+        """xử lý một trạng thái có ưu tiên cao nhất đang chờ"""
+        nonlocal game_state, last_shot_time, fire_mode_choices
+
+        event = state_queue.pop_ready(current_time)
+        if event is None:
+            return
+
+        if event["advance_boss"]:
+            boss_rush.advance_to_next_boss(current_time)
+
+        if event["clear_bullets"]:
+            enemy_bullet_pool.clear()
+            bullet_pool.clear()
+
+        game_state = event["state"]
+
+        if event["reset_shot_timer"]:
+            last_shot_time = current_time
+
+        if game_state == "upgrade_fire_mode" and selected_ammo is not None:
+            fire_mode_choices = build_fire_mode_choices(selected_ammo)
+
+        state_queue.clear()
+
     def draw_boss_position_marker(surface, x_position, y_position):
         """vẽ tam giác đánh dấu vị trí đứng dưới boss"""
         triangle_surface = pygame.Surface((28, 28), pygame.SRCALPHA)
@@ -1435,46 +1719,34 @@ def main():
                 if game_state == "menu":
                     if event.key in (pygame.K_1, pygame.K_KP1):
                         selected_ammo = 1
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=10)
                     elif event.key in (pygame.K_2, pygame.K_KP2):
                         selected_ammo = 2
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=10)
                     elif event.key in (pygame.K_3, pygame.K_KP3):
                         selected_ammo = 3
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=10)
                     elif event.key == pygame.K_q:
                         running = False
                 elif game_state == "upgrade_fire_mode":
                     if event.key == pygame.K_1:
                         selected_ammo = fire_mode_choices[0]
-                        boss_rush.advance_to_next_boss(current_time)
-                        enemy_bullet_pool.clear()
-                        bullet_pool.clear()
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=5, clear_bullets=True, advance_boss=True, reset_shot_timer=True)
                     elif event.key == pygame.K_2:
                         selected_ammo = fire_mode_choices[1]
-                        boss_rush.advance_to_next_boss(current_time)
-                        enemy_bullet_pool.clear()
-                        bullet_pool.clear()
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=5, clear_bullets=True, advance_boss=True, reset_shot_timer=True)
                     elif event.key == pygame.K_q:
-                        game_state = "upgrade"
+                        queue_state_change("upgrade", current_time, priority=10)
                 elif game_state == "upgrade":
                     if event.key == pygame.K_1:
                         player.lives += 1
-                        boss_rush.advance_to_next_boss(current_time)
-                        enemy_bullet_pool.clear()
-                        bullet_pool.clear()
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=5, clear_bullets=True, advance_boss=True, reset_shot_timer=True)
                     elif event.key == pygame.K_2:
                         fire_mode_choices = build_fire_mode_choices(selected_ammo)
-                        game_state = "upgrade_fire_mode"
+                        queue_state_change("upgrade_fire_mode", current_time, priority=10)
                     elif event.key == pygame.K_3:
                         damage_bonus += 3
-                        boss_rush.advance_to_next_boss(current_time)
-                        enemy_bullet_pool.clear()
-                        bullet_pool.clear()
-                        game_state = "playing"
+                        queue_state_change("playing", current_time, priority=5, clear_bullets=True, advance_boss=True, reset_shot_timer=True)
                     elif event.key == pygame.K_q:
                         running = False
                 elif game_state != "playing":
@@ -1482,6 +1754,8 @@ def main():
                         return main()
                     elif event.key == pygame.K_q: # bấm q để thoát
                         running = False
+
+        apply_state_change(current_time)
 
         if game_state == "playing":
             BACKGROUND_OFFSET += BACKGROUND_SCROLL_SPEED
@@ -1555,11 +1829,9 @@ def main():
                         current_boss.take_damage(bullet.damage, hit_rect)
                         if current_boss.is_cleared():
                             if boss_rush.has_next_boss():
-                                game_state = "upgrade"
-                                enemy_bullet_pool.clear()
-                                bullet_pool.clear()
+                                queue_state_change("upgrade", current_time, priority=20, clear_bullets=True)
                             else:
-                                game_state = "win"
+                                queue_state_change("win", current_time, priority=20, clear_bullets=True)
                             current_boss = boss_rush.current_boss()
                             break
 
@@ -1586,7 +1858,9 @@ def main():
                     player.invulnerable_until = current_time + 2000 # miễn nhiễm tạm thời
                     if player.lives <= 0:
                         # hết mạng thì thua
-                        game_state = "lose"
+                        queue_state_change("lose", current_time, priority=0, clear_bullets=True)
+
+            apply_state_change(current_time)
 
         # vẽ frame mới
         draw_scrolling_background(screen, BACKGROUND_OFFSET if game_state == "playing" else 0)
